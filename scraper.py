@@ -10,6 +10,13 @@ Pagination strategy:
     date in each batch is used as the anchor for the next request, until
     START_DATE is reached (the date Super Mas was introduced).
 
+Primary key note:
+    The API's `numero_sorteo` field (our `draw_number`) is only populated
+    for recent draws — most historical draws have it as null. The API's
+    internal `id` field is always present and unique, so it is used as the
+    primary key (`draw_id`) instead. `draw_number` is kept as a plain,
+    nullable reference column.
+
 Output:
     - A local SQLite file: data/leidsa_supermas.db
     - A raw backup of every API response in data/raw/ (JSON), in case a
@@ -64,26 +71,26 @@ def init_db(conn: sqlite3.Connection) -> None:
     conn.executescript(
         """
         CREATE TABLE IF NOT EXISTS draws (
-            draw_number      TEXT PRIMARY KEY,  -- from API's numero_sorteo
-            draw_date        TEXT NOT NULL,      -- from API's fecha_sorteo
-            day_of_week      TEXT,
-            more_number      INTEGER,   -- "Mas" number (1-12), from API's loto1
-            super_more_number INTEGER,  -- "Super Mas" number, from API's loto2
-            draw_time        TEXT,      -- from API's hora
-            api_id           INTEGER,   -- internal id from the API, for traceability
-            scraped_at       TEXT NOT NULL,
-            raw_json         TEXT NOT NULL
+            draw_id           INTEGER PRIMARY KEY,  -- from API's internal "id" field (always present)
+            draw_number       TEXT,                 -- from API's numero_sorteo (NULL for most historical draws)
+            draw_date         TEXT NOT NULL,         -- from API's fecha_sorteo
+            day_of_week       TEXT,
+            more_number       INTEGER,   -- "Mas" number (1-12), from API's loto1
+            super_more_number INTEGER,   -- "Super Mas" number, from API's loto2
+            draw_time         TEXT,      -- from API's hora (also NULL for many historical draws)
+            scraped_at        TEXT NOT NULL,
+            raw_json          TEXT NOT NULL
         );
 
         CREATE TABLE IF NOT EXISTS draw_numbers (
-            draw_number TEXT NOT NULL,
-            position    INTEGER NOT NULL,
-            number      INTEGER NOT NULL,
-            PRIMARY KEY (draw_number, position),
-            FOREIGN KEY (draw_number) REFERENCES draws(draw_number)
+            draw_id  INTEGER NOT NULL,
+            position INTEGER NOT NULL,
+            number   INTEGER NOT NULL,
+            PRIMARY KEY (draw_id, position),
+            FOREIGN KEY (draw_id) REFERENCES draws(draw_id)
         );
 
-        CREATE INDEX IF NOT EXISTS idx_draws_date ON draws(draw_date);
+        CREATE UNIQUE INDEX IF NOT EXISTS idx_draws_date_unique ON draws(draw_date);
         CREATE INDEX IF NOT EXISTS idx_draw_numbers_number ON draw_numbers(number);
         """
     )
@@ -92,10 +99,10 @@ def init_db(conn: sqlite3.Connection) -> None:
 
 def upsert_draw(conn: sqlite3.Connection, draw: dict) -> bool:
     """Insert a draw and its 6 main numbers. Returns True if it was new."""
-    draw_number = draw["numero_sorteo"]
+    draw_id = draw["id"]
 
     exists = conn.execute(
-        "SELECT 1 FROM draws WHERE draw_number = ?", (draw_number,)
+        "SELECT 1 FROM draws WHERE draw_id = ?", (draw_id,)
     ).fetchone()
     if exists:
         return False
@@ -106,18 +113,18 @@ def upsert_draw(conn: sqlite3.Connection, draw: dict) -> bool:
     conn.execute(
         """
         INSERT INTO draws
-            (draw_number, draw_date, day_of_week, more_number, super_more_number,
-             draw_time, api_id, scraped_at, raw_json)
+            (draw_id, draw_number, draw_date, day_of_week, more_number,
+             super_more_number, draw_time, scraped_at, raw_json)
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
         """,
         (
-            draw_number,
+            draw_id,
+            draw.get("numero_sorteo"),
             draw_date,
             day_of_week,
             draw.get("loto1"),
             draw.get("loto2"),
             draw.get("hora"),
-            draw.get("id"),
             datetime.utcnow().isoformat(timespec="seconds"),
             json.dumps(draw, ensure_ascii=False),
         ),
@@ -127,10 +134,10 @@ def upsert_draw(conn: sqlite3.Connection, draw: dict) -> bool:
     for position, number in enumerate(numbers, start=1):
         conn.execute(
             """
-            INSERT OR IGNORE INTO draw_numbers (draw_number, position, number)
+            INSERT OR IGNORE INTO draw_numbers (draw_id, position, number)
             VALUES (?, ?, ?)
             """,
-            (draw_number, position, number),
+            (draw_id, position, number),
         )
 
     return True
@@ -194,7 +201,7 @@ def run(start_date: date, db_path: Path, raw_dir: Path) -> None:
     conn.execute(
         """
         DELETE FROM draw_numbers
-        WHERE draw_number NOT IN (SELECT draw_number FROM draws)
+        WHERE draw_id NOT IN (SELECT draw_id FROM draws)
         """
     )
     conn.commit()
@@ -202,8 +209,18 @@ def run(start_date: date, db_path: Path, raw_dir: Path) -> None:
         print(f"Discarded {deleted} draws older than {start_date} (outside the requested range).")
 
     total_draws = conn.execute("SELECT COUNT(*) FROM draws").fetchone()[0]
+    total_numbers = conn.execute("SELECT COUNT(*) FROM draw_numbers").fetchone()[0]
     date_range = conn.execute("SELECT MIN(draw_date), MAX(draw_date) FROM draws").fetchone()
-    print(f"\nDone. {total_draws} draws saved to {db_path}. Range: {date_range[0]} -> {date_range[1]}")
+    print(
+        f"\nDone. {total_draws} draws / {total_numbers} number rows saved to {db_path}. "
+        f"Range: {date_range[0]} -> {date_range[1]}"
+    )
+    expected_numbers = total_draws * 6
+    if total_numbers != expected_numbers:
+        print(
+            f"[WARNING] Expected {expected_numbers} rows in draw_numbers "
+            f"(6 per draw) but found {total_numbers}. Investigate before proceeding."
+        )
 
     conn.close()
 

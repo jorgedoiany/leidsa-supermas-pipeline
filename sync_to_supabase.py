@@ -2,9 +2,9 @@
 sync_to_supabase.py
 --------------------
 Syncs the local SQLite database (data/leidsa_supermas.db) to Postgres on
-Supabase. Creates the tables if they do not exist and upserts by
-draw_number, so it can be run after every incremental scrape without
-creating duplicates.
+Supabase. Creates the tables if they do not exist and upserts by draw_id,
+so it can be run after every incremental scrape without creating
+duplicates.
 
 Requires a SUPABASE_DB_URL environment variable with the Postgres
 connection string (Project Settings -> Database -> Connection string -> URI,
@@ -26,48 +26,48 @@ load_dotenv()
 
 DDL = """
 CREATE TABLE IF NOT EXISTS draws (
-    draw_number       TEXT PRIMARY KEY,
+    draw_id           BIGINT PRIMARY KEY,
+    draw_number       TEXT,
     draw_date         DATE NOT NULL,
     day_of_week       TEXT,
     more_number       INTEGER,
     super_more_number INTEGER,
     draw_time         TEXT,
-    api_id            BIGINT,
     scraped_at        TIMESTAMP,
     raw_json          JSONB
 );
 
 CREATE TABLE IF NOT EXISTS draw_numbers (
-    draw_number TEXT NOT NULL REFERENCES draws(draw_number),
-    position    INTEGER NOT NULL,
-    number      INTEGER NOT NULL,
-    PRIMARY KEY (draw_number, position)
+    draw_id  BIGINT NOT NULL REFERENCES draws(draw_id),
+    position INTEGER NOT NULL,
+    number   INTEGER NOT NULL,
+    PRIMARY KEY (draw_id, position)
 );
 
-CREATE INDEX IF NOT EXISTS idx_draws_date ON draws(draw_date);
+CREATE UNIQUE INDEX IF NOT EXISTS idx_draws_date_unique ON draws(draw_date);
 CREATE INDEX IF NOT EXISTS idx_draw_numbers_number ON draw_numbers(number);
 """
 
 UPSERT_DRAW = """
-INSERT INTO draws (draw_number, draw_date, day_of_week, more_number, super_more_number,
-                    draw_time, api_id, scraped_at, raw_json)
-VALUES (:draw_number, :draw_date, :day_of_week, :more_number, :super_more_number,
-        :draw_time, :api_id, :scraped_at, :raw_json)
-ON CONFLICT (draw_number) DO UPDATE SET
+INSERT INTO draws (draw_id, draw_number, draw_date, day_of_week, more_number,
+                    super_more_number, draw_time, scraped_at, raw_json)
+VALUES (:draw_id, :draw_number, :draw_date, :day_of_week, :more_number,
+        :super_more_number, :draw_time, :scraped_at, :raw_json)
+ON CONFLICT (draw_id) DO UPDATE SET
+    draw_number       = EXCLUDED.draw_number,
     draw_date         = EXCLUDED.draw_date,
     day_of_week       = EXCLUDED.day_of_week,
     more_number       = EXCLUDED.more_number,
     super_more_number = EXCLUDED.super_more_number,
     draw_time         = EXCLUDED.draw_time,
-    api_id            = EXCLUDED.api_id,
     scraped_at        = EXCLUDED.scraped_at,
     raw_json          = EXCLUDED.raw_json;
 """
 
 UPSERT_NUMBER = """
-INSERT INTO draw_numbers (draw_number, position, number)
-VALUES (:draw_number, :position, :number)
-ON CONFLICT (draw_number, position) DO UPDATE SET number = EXCLUDED.number;
+INSERT INTO draw_numbers (draw_id, position, number)
+VALUES (:draw_id, :position, :number)
+ON CONFLICT (draw_id, position) DO UPDATE SET number = EXCLUDED.number;
 """
 
 
