@@ -28,6 +28,11 @@ draws            — 1 row per draw (date, More/Super More numbers, time, raw JS
 draw_numbers     — 1 row per main drawn number (long format, 6 per draw)
 ```
 
+`draws.draw_id` (the API's internal `id` field) is the primary key, not
+`draw_number` (the API's `numero_sorteo`). The API only started populating
+`numero_sorteo` for recent draws — most historical draws have it as `null` —
+so it is kept as a plain reference column instead of a key.
+
 ## Usage
 
 ```bash
