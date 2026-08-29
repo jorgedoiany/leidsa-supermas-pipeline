@@ -54,3 +54,9 @@ python sync_to_supabase.py
   reproducibility, remove it from `.gitignore`.
 - A lottery draw is a random process by design; this pipeline is meant for
   descriptive, historical analysis, not for predicting future draws.
+- **Supabase connection:** the direct connection host (`db.<ref>.supabase.co`)
+  is IPv6-only unless you have purchased the dedicated IPv4 add-on. If your
+  network's DNS resolver only requests A (IPv4) records, the direct host
+  will fail to resolve. Use the **Session pooler** connection string instead
+  (Project Settings → Database → Connect → Session pooler), which is
+  IPv4-compatible: `postgresql://postgres.<ref>:[password]@aws-0-<region>.pooler.supabase.com:5432/postgres`.
