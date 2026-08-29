@@ -19,9 +19,12 @@ Primary key note:
 
 Output:
     - A local SQLite file: data/leidsa_supermas.db
-    - A raw backup of every API response in data/raw/ (JSON), in case a
-      field we are not using today (e.g. prize/winner breakdown) becomes
-      useful later.
+    - A raw backup of the draw list from every API response in data/raw/
+      (JSON). The API's `numerosRepetidos` and `ganadores` fields are
+      deliberately excluded from this backup: the former is redundant
+      (recomputable from draw_numbers) and the latter contains personal
+      data of private individuals (full names, gender, province, prize
+      amount) that this project has no use for.
 
 Usage:
     python scraper.py
@@ -53,18 +56,29 @@ HEADERS = {
 }
 
 
-def fetch_batch(anchor_date: date, raw_dir: Path) -> dict:
-    """Request a batch of draws anchored on `anchor_date` and save the raw JSON."""
+def fetch_batch(anchor_date: date, raw_dir: Path) -> list:
+    """
+    Request a batch of draws anchored on `anchor_date` and save a raw backup
+    of the draw list only.
+
+    The API's full response also includes `numerosRepetidos` (a rolling
+    frequency list we recompute ourselves from `draw_numbers`, so it is
+    redundant) and `ganadores` (real winners' full names, gender, province,
+    and prize amount — personal data of private individuals that this
+    project has no use for). Neither is persisted anywhere, not even in the
+    raw backup, since we have no need to retain it.
+    """
     params = {"id": LOTTERY_ID, "fecha": anchor_date.isoformat()}
     resp = requests.get(API_URL, params=params, headers=HEADERS, timeout=20)
     resp.raise_for_status()
     payload = resp.json()
+    history = payload.get("historial", [])
 
     raw_dir.mkdir(parents=True, exist_ok=True)
     raw_path = raw_dir / f"history_{anchor_date.isoformat()}.json"
-    raw_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    raw_path.write_text(json.dumps(history, ensure_ascii=False, indent=2), encoding="utf-8")
 
-    return payload
+    return history
 
 
 def init_db(conn: sqlite3.Connection) -> None:
@@ -159,8 +173,7 @@ def run(start_date: date, db_path: Path, raw_dir: Path) -> None:
             break
         seen_cursor_dates.add(cursor_date)
 
-        payload = fetch_batch(cursor_date, raw_dir)
-        history = payload.get("historial", [])
+        history = fetch_batch(cursor_date, raw_dir)
 
         if not history:
             print(f"[DONE] The API returned no draws for fecha={cursor_date}.")
